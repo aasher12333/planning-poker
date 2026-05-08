@@ -12,19 +12,27 @@ function Home() {
     const navigate = useNavigate();
 
     const createRoom = async () => {
-        const roomId = generateId();
-        const adminToken = crypto.randomUUID(); // Secure token
-        localStorage.setItem(`admin_${roomId}`, adminToken); // Save to browser
+        try {
+            console.log("1. Generating IDs...");
+            const roomId = generateId();
+            const adminToken = crypto.randomUUID();
+            localStorage.setItem(`admin_${roomId}`, adminToken);
 
-        await setDoc(doc(db, "rooms", roomId), {
-            adminToken,
-            currentTicket: null,
-            status: 'waiting',
-            createdAt: Date.now(),
-            votes: {}
-        });
+            console.log("2. Contacting Firebase...");
+            await setDoc(doc(db, "rooms", roomId), {
+                adminToken,
+                currentTicket: null,
+                status: 'waiting',
+                createdAt: Date.now(),
+                votes: {}
+            });
 
-        navigate(`/room/${roomId}`);
+            console.log("3. Success! Navigating to room...");
+            navigate(`/room/${roomId}`);
+        } catch (error: any) {
+            console.error("Firebase Error details:", error);
+            alert(`Failed to create room: ${error.message}`);
+        }
     };
 
     return (
