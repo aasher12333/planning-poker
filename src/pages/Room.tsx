@@ -100,8 +100,6 @@ export default function Room() {
         );
     }
 
-    const hasVoted = room.votes[name]?.vote !== null;
-
     // Calculate rectangular positions
     const getRectPosition = (index: number, total: number, w: number, h: number) => {
         if (total === 1) return { x: 0, y: -h/2 };
