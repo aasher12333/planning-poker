@@ -58,21 +58,42 @@ export const submitVote = async (roomId: string, name: string, value: number | s
     });
 };
 
-export const startNewPoll = async (roomId: string, ticketName: string, currentVotes: any) => {
-    const resetVotes = Object.keys(currentVotes || {}).reduce((acc: any, key) => {
-        acc[key] = { vote: null, avatar: currentVotes[key]?.avatar || '' };
+export const startNewPoll = async (roomId: string, nextTicket: string, currentRoomData: any) => {
+    const { votes } = currentRoomData;
+
+    const resetVotes = Object.keys(votes).reduce((acc: any, key) => {
+        acc[key] = { vote: null, avatar: votes[key]?.avatar || '' };
         return acc;
     }, {});
 
     await updateDoc(doc(db, "rooms", roomId), {
-        currentTicket: ticketName,
+        currentTicket: nextTicket,
         status: 'voting',
         votes: resetVotes
     });
 };
 
-export const revealAllVotes = async (roomId: string) => {
-    await updateDoc(doc(db, "rooms", roomId), { status: 'revealed' });
+export const revealAllVotes = async (roomId: string, currentRoomData: any, medianResult: number | string) => {
+    if (currentRoomData.status === 'revealed') return;
+
+    const { currentTicket, votes, history = [] } = currentRoomData;
+    let updatedHistory = [...history];
+    
+    if (currentTicket) {
+        const validVotes = Object.values(votes).map((v: any) => v.vote).filter(v => typeof v === 'number') as number[];
+        
+        updatedHistory.push({
+            ticket: currentTicket,
+            result: medianResult,
+            timestamp: Date.now(),
+            alignment: validVotes.length > 1 ? Math.max(0, 100 - (Math.max(...validVotes) - Math.min(...validVotes)) * 10) : 100
+        });
+    }
+
+    await updateDoc(doc(db, "rooms", roomId), { 
+        status: 'revealed',
+        history: updatedHistory
+    });
 };
 
 export const deleteSession = async (roomId: string) => {
