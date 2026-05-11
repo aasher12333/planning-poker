@@ -31,7 +31,8 @@ export const createNewRoom = async (): Promise<string> => {
                 currentTicket: null,
                 status: 'waiting',
                 createdAt: Date.now(),
-                votes: {}
+                votes: {},
+                history: []
             }),
             timeoutPromise
         ]);
@@ -58,8 +59,15 @@ export const submitVote = async (roomId: string, name: string, value: number | s
     });
 };
 
+const parseTicketId = (input: string) => {
+    const regex = /([A-Z]+-\d+)/g;
+    const match = input.match(regex);
+    return match ? match[match.length - 1] : input.trim();
+};
+
 export const startNewPoll = async (roomId: string, nextTicket: string, currentRoomData: any) => {
     const { votes } = currentRoomData;
+    const ticketId = parseTicketId(nextTicket);
 
     const resetVotes = Object.keys(votes).reduce((acc: any, key) => {
         acc[key] = { vote: null, avatar: votes[key]?.avatar || '' };
@@ -67,7 +75,7 @@ export const startNewPoll = async (roomId: string, nextTicket: string, currentRo
     }, {});
 
     await updateDoc(doc(db, "rooms", roomId), {
-        currentTicket: nextTicket,
+        currentTicket: ticketId,
         status: 'voting',
         votes: resetVotes
     });
@@ -81,10 +89,13 @@ export const revealAllVotes = async (roomId: string, currentRoomData: any, media
     
     if (currentTicket) {
         const validVotes = Object.values(votes).map((v: any) => v.vote).filter(v => typeof v === 'number') as number[];
+        const mean = validVotes.length ? Number((validVotes.reduce((a, b) => a + b, 0) / validVotes.length).toFixed(1)) : 0;
         
         updatedHistory.push({
             ticket: currentTicket,
             result: medianResult,
+            initialMean: mean,
+            individualVotes: votes,
             timestamp: Date.now(),
             alignment: validVotes.length > 1 ? Math.max(0, 100 - (Math.max(...validVotes) - Math.min(...validVotes)) * 10) : 100
         });
@@ -96,6 +107,22 @@ export const revealAllVotes = async (roomId: string, currentRoomData: any, media
     });
 };
 
-export const deleteSession = async (roomId: string) => {
+export const updateConsensus = async (roomId: string, currentRoomData: any, newResult: number | string) => {
+    const { history = [] } = currentRoomData;
+    if (history.length === 0) return;
+    
+    let updatedHistory = [...history];
+    updatedHistory[updatedHistory.length - 1].result = newResult;
+    
+    await updateDoc(doc(db, "rooms", roomId), {
+        history: updatedHistory
+    });
+};
+
+export const endSession = async (roomId: string) => {
+    await updateDoc(doc(db, "rooms", roomId), { status: 'recap' });
+};
+
+export const purgeSession = async (roomId: string) => {
     await deleteDoc(doc(db, "rooms", roomId));
 };

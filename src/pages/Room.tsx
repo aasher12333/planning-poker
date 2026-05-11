@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
-import { joinPokerTable, submitVote, startNewPoll, revealAllVotes, deleteSession } from '../services/pokerService';
+import { joinPokerTable, submitVote, startNewPoll, revealAllVotes, updateConsensus, endSession, purgeSession } from '../services/pokerService';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const OPTIONS = [0, 1, 2, 3, 5, 8, 13, 21, 'Abstain'];
@@ -17,6 +17,8 @@ export default function Room() {
     const [selectedAvatar, setSelectedAvatar] = useState(localStorage.getItem('poker-avatar') || `https://api.dicebear.com/7.x/bottts/svg?seed=Alpha`);
     const [ticketInput, setTicketInput] = useState('');
     const [showHistory, setShowHistory] = useState(false);
+    const [confirmEnd, setConfirmEnd] = useState(false);
+    const [editingConsensus, setEditingConsensus] = useState(false);
 
     const isAdmin = room?.adminToken === localStorage.getItem(`admin_${roomId}`);
 
@@ -54,6 +56,54 @@ export default function Room() {
 
     if (!room) return <div className="min-h-screen bg-zinc-950 flex items-center justify-center"><div className="w-12 h-12 border-4 border-red-600 border-t-transparent rounded-none animate-spin"></div></div>;
 
+    if (room.status === 'recap') {
+        const mavericks: any[] = [];
+        (room.history || []).forEach((poll: any) => {
+            if (!poll.individualVotes) return;
+            Object.entries(poll.individualVotes).forEach(([user, data]: any) => {
+                if (typeof data.vote === 'number' && typeof poll.initialMean === 'number') {
+                    if (Math.abs(data.vote - poll.initialMean) >= 3 && data.vote === poll.result) {
+                        mavericks.push({ user, avatar: data.avatar, ticket: poll.ticket, vote: data.vote });
+                    }
+                }
+            });
+        });
+
+        return (
+            <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-white p-8 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1 bg-red-600/50"></div>
+                <h1 className="text-5xl md:text-7xl font-black uppercase tracking-tighter mb-8 text-white drop-shadow-lg">Session <span className="text-red-600">Recap</span></h1>
+                
+                {mavericks.length > 0 && (
+                    <div className="mb-12 w-full max-w-2xl bg-zinc-900 border border-zinc-800 p-6 shadow-[0_0_30px_rgba(220,38,38,0.1)] rounded-none">
+                        <h2 className="text-xl font-black uppercase tracking-tighter text-white mb-4 flex items-center gap-2">
+                            <span className="text-red-600">★</span> Maverick Awards
+                        </h2>
+                        <div className="space-y-3">
+                            {mavericks.map((m, i) => (
+                                <div key={i} className="flex items-center justify-between bg-zinc-950 p-3 border border-zinc-800 rounded-none">
+                                    <div className="flex items-center gap-4">
+                                        <img src={m.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${m.user}`} className="w-10 h-10 object-contain" />
+                                        <span className="font-bold uppercase tracking-wider">{m.user}</span>
+                                    </div>
+                                    <div className="text-xs md:text-sm font-mono text-zinc-400">
+                                        Ticket <span className="text-white font-bold">{m.ticket}</span> : Stood ground on <span className="text-red-500 font-bold">{m.vote}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                
+                {isAdmin && (
+                    <button onClick={() => { purgeSession(roomId!); navigate('/'); }} className="px-8 py-4 bg-red-600 text-white font-bold text-lg uppercase tracking-widest hover:bg-red-500 transition-colors rounded-none">
+                        Close Room & Purge Data
+                    </button>
+                )}
+            </div>
+        );
+    }
+
     if (room.votes[name] === undefined) {
         return (
             <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-white relative overflow-hidden">
@@ -63,9 +113,8 @@ export default function Room() {
                     <div className="absolute bottom-0 right-0 w-8 h-8 border-b-2 border-r-2 border-red-600 opacity-50"></div>
                     
                     <h2 className="text-3xl font-black uppercase tracking-tighter mb-2 text-white">Identify</h2>
-                    <p className="text-zinc-500 text-xs tracking-widest uppercase mb-6 font-mono">Select your tactical avatar</p>
+                    <p className="text-zinc-500 text-xs tracking-widest uppercase mb-6 font-mono">Select your avatar</p>
                     
-                    {/* Avatar Selection Grid */}
                     <div className="grid grid-cols-3 gap-3 mb-6">
                         {AVATAR_SEEDS.map((seed) => {
                             const url = `https://api.dicebear.com/7.x/bottts/svg?seed=${seed}`;
@@ -101,7 +150,6 @@ export default function Room() {
             </div>
         );
     }
-// Calculate rectangular positions
     const getRectPosition = (index: number, total: number, w: number, h: number) => {
         if (total === 1) return { x: 0, y: -h/2 };
         const perimeter = 2 * w + 2 * h;
@@ -113,7 +161,6 @@ export default function Room() {
         return { x: -w/2, y: h/2 - (d - 2*w - h) }; // Left
     };
 
-    // Outlier calculation
     const allValidVotes = Object.values(room.votes).map((v: any) => v.vote).filter(v => typeof v === 'number') as number[];
     const minVote = allValidVotes.length > 0 ? Math.min(...allValidVotes) : null;
     const maxVote = allValidVotes.length > 0 ? Math.max(...allValidVotes) : null;
@@ -121,10 +168,8 @@ export default function Room() {
 
     return (
         <div className="min-h-screen bg-zinc-950 text-white p-4 md:p-8 flex flex-col relative overflow-hidden">
-            {/* Ambient Background */}
             <div className="absolute top-0 left-0 w-full h-1 bg-red-600/50"></div>
 
-            {/* Header & Controls */}
             <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 mb-8 bg-zinc-900 p-6 border border-zinc-800 shadow-lg rounded-none relative z-10">
                 <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-600"></div>
                 
@@ -142,7 +187,7 @@ export default function Room() {
                     <div className="flex flex-wrap gap-3 items-center bg-zinc-950 p-3 border border-zinc-800 rounded-none">
                         <input
                             className="w-40 p-2.5 bg-zinc-900 border border-zinc-700 outline-none focus:border-red-600 text-sm font-bold uppercase tracking-wider text-white placeholder-zinc-600 transition-colors rounded-none"
-                            placeholder="TICKET ID..."
+                            placeholder="JIRA URL / ID..."
                             value={ticketInput}
                             onChange={(e) => setTicketInput(e.target.value)}
                         />
@@ -154,7 +199,7 @@ export default function Room() {
                         </button>
                         <button 
                             onClick={() => revealAllVotes(roomId!, room, calculateMedian())} 
-                            className="px-5 py-2.5 bg-red-600 text-white font-bold text-xs uppercase tracking-widest hover:bg-red-500 transition-all rounded-none"
+                            className="px-5 py-2.5 bg-gradient-to-b from-zinc-700 to-zinc-800 border border-zinc-600 text-zinc-300 font-bold text-xs uppercase tracking-widest hover:text-white transition-all rounded-none"
                         >
                             Show Votes
                         </button>
@@ -164,33 +209,58 @@ export default function Room() {
                         >
                             History
                         </button>
-                        <button 
-                            onClick={() => { deleteSession(roomId!); navigate('/'); }} 
-                            className="px-4 py-2.5 bg-transparent text-zinc-500 hover:text-red-600 font-bold text-xs uppercase tracking-widest transition-colors ml-auto rounded-none"
-                        >
-                            End Session
-                        </button>
+                        {confirmEnd ? (
+                            <div className="flex items-center gap-2 relative">
+                                <span className="absolute -top-7 right-0 text-[10px] text-red-500 font-mono font-bold whitespace-nowrap">
+                                    // WARNING: SESSION_DATA_WILL_BE_PURGED. ENSURE JIRA IS UPDATED.
+                                </span>
+                                <button onClick={() => endSession(roomId!)} className="px-4 py-2.5 bg-red-600 text-white font-bold text-xs uppercase shadow-[0_0_15px_rgba(220,38,38,0.3)] hover:bg-red-500 rounded-none transition-all">YES</button>
+                                <button onClick={() => setConfirmEnd(false)} className="px-4 py-2.5 bg-zinc-800 border border-zinc-700 text-zinc-300 font-bold text-xs uppercase hover:text-white rounded-none transition-all">NO</button>
+                            </div>
+                        ) : (
+                            <button 
+                                onClick={() => setConfirmEnd(true)} 
+                                className="px-4 py-2.5 bg-red-600 text-white font-bold text-xs uppercase tracking-widest transition-colors ml-auto rounded-none hover:bg-red-500"
+                            >
+                                End Session
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
 
-            {/* The Virtual Table */}
             <div className="flex-1 flex items-center justify-center relative mb-12 z-10 w-full max-w-5xl mx-auto mt-10">
                 <div className="relative flex items-center justify-center w-full h-[300px] md:h-[400px]">
-                    
-                    {/* Tactical Rectangular Table */}
-                    <div className="absolute w-[280px] h-[180px] md:w-[600px] md:h-[260px] bg-zinc-900 border border-red-600/30 rounded-sm flex items-center justify-center">
-                        {/* Center Display / Hologram Base */}
+                    <div className="absolute w-[280px] h-[180px] md:w-[600px] md:h-[260px] bg-zinc-900 border border-zinc-800 rounded-sm flex items-center justify-center">
+                        <div className="absolute inset-4 border border-red-600/10 pointer-events-none"></div>
                         <div className="relative z-20 flex flex-col items-center justify-center w-48 h-32 bg-zinc-950 border border-zinc-800 shadow-inner rounded-none">
                             {room.status === 'revealed' ? (
-                                <div className="text-center animate-in fade-in zoom-in duration-300">
+                                <div className="text-center animate-in fade-in zoom-in duration-300 relative">
                                     <div className="text-zinc-500 text-[10px] font-bold tracking-[0.2em] uppercase mb-1 font-mono">Result (Median)</div>
-                                    <div className="text-6xl font-black text-white text-glow font-mono">{calculateMedian()}</div>
+                                    
+                                    {isAdmin && editingConsensus ? (
+                                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 bg-zinc-900 border border-zinc-700 p-2 grid grid-cols-3 gap-1 z-50 shadow-xl w-32">
+                                            {OPTIONS.filter(o => typeof o === 'number').map(opt => (
+                                                <button key={opt} onClick={() => { updateConsensus(roomId!, room, opt); setEditingConsensus(false); }} className="px-2 py-1 bg-zinc-800 text-white font-mono hover:bg-red-600 text-sm border border-zinc-700">
+                                                    {opt}
+                                                </button>
+                                            ))}
+                                            <button onClick={() => setEditingConsensus(false)} className="col-span-3 text-xs text-zinc-500 mt-1 hover:text-white uppercase font-bold">Cancel</button>
+                                        </div>
+                                    ) : null}
+
+                                    <div 
+                                        className={`text-6xl font-black text-white text-glow font-mono ${isAdmin ? 'cursor-pointer hover:text-red-400 transition-colors' : ''}`}
+                                        onClick={() => isAdmin && setEditingConsensus(!editingConsensus)}
+                                        title={isAdmin ? "Click to override consensus" : ""}
+                                    >
+                                        {room.history && room.history.length > 0 ? room.history[room.history.length - 1].result : calculateMedian()}
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="text-center">
                                     <div className={`text-xs font-bold uppercase tracking-widest font-mono ${room.status === 'voting' ? 'text-red-600 animate-pulse' : 'text-zinc-600'}`}>
-                                        {room.status === 'voting' ? 'SCANNING' : 'STANDBY'}
+                                        {room.status === 'VOTING' ? 'SCANNING' : 'STANDBY'}
                                     </div>
                                     {room.status === 'voting' && (
                                         <div className="mt-4 flex gap-1 justify-center">
@@ -204,7 +274,6 @@ export default function Room() {
                         </div>
                     </div>
 
-                    {/* Players Orbiting the Table */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                         {Object.entries(room.votes).map(([user, data]: any, index, arr) => {
                             const isMobile = window.innerWidth < 768;
@@ -235,7 +304,6 @@ export default function Room() {
                                     style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
                                 >
                                     <div className={`w-16 h-16 md:w-20 md:h-20 rounded-none flex flex-col items-center justify-center font-mono font-black transition-all duration-300 relative ${frameClasses}`}>
-                                        {/* Avatar or Vote result */}
                                         {room.status === 'revealed' ? (
                                             <span className="text-2xl">{data.vote}</span>
                                         ) : (isAdmin && hasUserVoted) ? (
@@ -244,7 +312,7 @@ export default function Room() {
                                             <img 
                                                 src={data.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${user}`} 
                                                 alt={user} 
-                                                className={`w-10 h-10 md:w-12 md:h-12 object-contain opacity-80 ${hasUserVoted ? 'grayscale-0' : 'grayscale'}`} 
+                                                className={`w-10 h-10 md:w-12 md:h-12 object-contain opacity-100`} 
                                             />
                                         )}
                                     </div>
@@ -259,7 +327,6 @@ export default function Room() {
                 </div>
             </div>
 
-            {/* Voting Deck */}
             {room.status === 'voting' && (
                 <div className="relative z-20 mt-auto bg-zinc-900 p-4 md:p-8 border-t border-zinc-800 -mx-4 md:-mx-8 -mb-4 md:-mb-8">
                     <div className="max-w-4xl mx-auto">
@@ -287,7 +354,6 @@ export default function Room() {
                 </div>
             )}
 
-            {/* Tactical History Drawer */}
             <AnimatePresence>
                 {showHistory && (
                     <>
