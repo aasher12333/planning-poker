@@ -144,7 +144,7 @@ export default function Room() {
                         disabled={!name.trim()}
                         className="w-full py-4 bg-red-600 font-bold uppercase tracking-widest hover:bg-red-500 transition-all rounded-none disabled:opacity-50 disabled:hover:bg-red-600 active:scale-95"
                     >
-                        Deploy
+                        Join
                     </button>
                 </div>
             </div>
